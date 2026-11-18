@@ -63,63 +63,86 @@ struct PushUpCounter {
     }
 }
 
+
+// Front tracking uses a calibrated eye line and a down/up hysteresis cycle.
+// Reference: https://github.com/quickpose/Flappy-Pushups-iOS-Demo-App
 struct FrontPushUpCounter {
-    private struct Reference {
-        let frame: PoseGeometry.Frame
-        let height: CGFloat
+    struct Head {
+        /// Horizontal coordinates and widths are expressed in units of image height.
+        let x: CGFloat
+        let y: CGFloat
+        let width: CGFloat
+
+        var isUsable: Bool { x.isFinite && (0...1).contains(y) && width.isFinite && width >= 0.017 }
     }
 
-    private var cycle = PushUpCounter(trackingTimeout: 1.5)
-    private var reference: Reference?
+    private static let trackingTimeout: TimeInterval = 1.25
+    private var cycle = PushUpCounter(trackingTimeout: trackingTimeout)
+    private var baseline: Head?
+    private var calibration: (head: Head, since: TimeInterval)?
+    private var lastSeenAt: TimeInterval?
     private var nearBottomAt: TimeInterval?
 
     var isFollowingDescent: Bool {
         cycle.phase == .waitingForReturn || nearBottomAt != nil
     }
 
-    mutating func update(
-        _ frame: PoseGeometry.Frame, measurement: PoseGeometry.FrontMeasurement?, at seconds: TimeInterval
-    ) -> Bool {
-        if let reference, measurement != nil, !frame.hasMatchingWrists(to: reference.frame) {
+    mutating func update(_ head: Head?, at seconds: TimeInterval) -> Bool {
+        if let lastSeenAt, seconds - lastSeenAt > Self.trackingTimeout {
             self = Self()
         }
 
-        let previousPhase = cycle.phase
-        let position = position(of: frame, measurement: measurement, at: seconds)
-        let counted = cycle.update(position: position, at: seconds)
+        guard let head, head.isUsable else {
+            calibration = nil
+            let inferredBottom = nearBottomAt.map { seconds - $0 <= 0.30 } ?? false
+            return cycle.update(position: inferredBottom ? .bottom : nil, at: seconds)
+        }
+        lastSeenAt = seconds
 
-        if cycle.phase == .waitingForTop {
-            reference = nil
-            nearBottomAt = nil
-        } else if (previousPhase == .waitingForTop || counted), let measurement {
-            reference = Reference(frame: frame, height: measurement.relativeHeight)
-            nearBottomAt = nil
+        guard let baseline else {
+            calibrate(head, at: seconds)
+            return false
+        }
+        if abs(head.x - baseline.x) > max(baseline.width * 1.25, 0.05) {
+            self = Self()
+            lastSeenAt = seconds
+            calibrate(head, at: seconds)
+            return false
         }
 
+        let drop = baseline.y - head.y
+        let bottomDepth = max(baseline.width * 0.55, 0.022)
+        let returnTolerance = max(baseline.width * 0.24, 0.010)
+        nearBottomAt = drop >= bottomDepth * 0.9 ? seconds : nil
+
+        let position: PushUpCounter.Position
+        if drop >= bottomDepth {
+            position = .bottom
+        } else if abs(drop) <= returnTolerance {
+            position = .top
+        } else {
+            position = .middle
+        }
+
+        let counted = cycle.update(position: position, at: seconds)
+        if counted {
+            self.baseline = head
+            nearBottomAt = nil
+        }
         return counted
     }
 
-    private mutating func position(
-        of frame: PoseGeometry.Frame, measurement: PoseGeometry.FrontMeasurement?, at seconds: TimeInterval
-    ) -> PushUpCounter.Position? {
-        guard let reference else {
-            return measurement.map { $0.armsExtended && $0.relativeHeight >= 0.62 ? .top : .middle }
+    private mutating func calibrate(_ head: Head, at seconds: TimeInterval) {
+        guard let calibration,
+              abs(head.y - calibration.head.y) <= max(head.width * 0.12, 0.005),
+              abs(head.x - calibration.head.x) <= max(head.width * 0.20, 0.008) else {
+            calibration = (head, seconds)
+            return
         }
-
-        if let drop = frame.shoulderDrop(from: reference.frame) {
-            nearBottomAt = drop >= reference.height * 0.30 ? seconds : nil
-            if drop >= reference.height * 0.35 { return .bottom }
-            if let measurement, measurement.armsExtended, measurement.relativeHeight >= reference.height * 0.85,
-               drop <= reference.height * 0.20 {
-                return .top
-            }
-            return .middle
-        }
-
-        // A short occlusion can complete a descent only when the shoulders were already near the bottom.
-        if let nearBottomAt, seconds - nearBottomAt <= 0.22 {
-            return .bottom
-        }
-        return nil
+        guard seconds - calibration.since >= 0.24 else { return }
+        baseline = head
+        self.calibration = nil
+        cycle.update(position: .top, at: calibration.since)
+        cycle.update(position: .top, at: seconds)
     }
 }

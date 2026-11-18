@@ -31,11 +31,6 @@ enum PoseGeometry {
         }
     }
 
-    struct FrontMeasurement {
-        let relativeHeight: CGFloat
-        let armsExtended: Bool
-    }
-
     struct Frame: Equatable, Sendable {
         let imageSize: CGSize
         let points: [Joint: CGPoint]
@@ -49,56 +44,10 @@ enum PoseGeometry {
             Self.arms.filter { points[$0.0] != nil && points[$0.1] != nil && points[$0.2] != nil }.count
         }
 
-        var visibleLegs: Int { legs.count }
-
-        var frontMeasurement: FrontMeasurement? {
-            guard let left = arm(Self.arms[0]), let right = arm(Self.arms[1]), let shoulderWidth else { return nil }
-            let wristWidth = abs(left.wrist.x - right.wrist.x)
-            guard abs(left.shoulder.y - right.shoulder.y) <= shoulderWidth * 0.65,
-                  wristWidth >= shoulderWidth * 0.18 else { return nil }
-
-            let shoulderX = (left.shoulder.x + right.shoulder.x) / 2
-            let wristY = (left.wrist.y + right.wrist.y) / 2
-            // The knees or feet should be behind the hands in an elevated front view.
-            guard legs.contains(where: {
-                $0.contains { joint in
-                    abs(joint.x - shoulderX) <= shoulderWidth * 1.4 && joint.y >= wristY - shoulderWidth * 0.30
-                }
-            }) else { return nil }
-
-            let leftAngle = PoseGeometry.elbowAngle(shoulder: left.shoulder, elbow: left.elbow, wrist: left.wrist)
-            let rightAngle = PoseGeometry.elbowAngle(shoulder: right.shoulder, elbow: right.elbow, wrist: right.wrist)
-            guard let leftAngle, let rightAngle else { return nil }
-            let shoulderY = (left.shoulder.y + right.shoulder.y) / 2
-            return FrontMeasurement(relativeHeight: (shoulderY - wristY) / shoulderWidth,
-                                    armsExtended: leftAngle >= 140 && rightAngle >= 140)
-        }
-
-        func shoulderDrop(from reference: Frame) -> CGFloat? {
-            guard imageSize == reference.imageSize, let width = reference.shoulderWidth else { return nil }
-
-            let drops = [Joint.leftShoulder, .rightShoulder].compactMap { joint -> CGFloat? in
-                guard let original = reference.pixelPoint(joint), let current = pixelPoint(joint),
-                      abs(original.x - current.x) <= width * 0.5 else { return nil }
-                return (original.y - current.y) / width
-            }
-            guard !drops.isEmpty else { return nil }
-            return drops.reduce(0, +) / CGFloat(drops.count)
-        }
-
-        func hasMatchingWrists(to reference: Frame) -> Bool {
-            guard imageSize == reference.imageSize, let width = reference.shoulderWidth else { return false }
-
-            return [Joint.leftWrist, .rightWrist].allSatisfy { joint in
-                guard let original = reference.pixelPoint(joint), let current = pixelPoint(joint) else { return false }
-                return hypot(original.x - current.x, original.y - current.y) <= width * 0.45
-            }
-        }
-
-        private var shoulderWidth: CGFloat? {
-            guard let left = pixelPoint(.leftShoulder), let right = pixelPoint(.rightShoulder) else { return nil }
-            let width = abs(left.x - right.x)
-            return width >= imageSize.width * 0.045 && width > 0 ? width : nil
+        var visibleLegs: Int {
+            let left = points[.leftKnee] != nil || points[.leftAnkle] != nil
+            let right = points[.rightKnee] != nil || points[.rightAnkle] != nil
+            return (left ? 1 : 0) + (right ? 1 : 0)
         }
 
         func smoothed(from previous: Frame?) -> Frame {
@@ -114,21 +63,6 @@ enum PoseGeometry {
             return Frame(imageSize: imageSize, points: smoothed)
         }
 
-        private var legs: [[CGPoint]] {
-            let left = [pixelPoint(.leftKnee), pixelPoint(.leftAnkle)].compactMap { $0 }
-            let right = [pixelPoint(.rightKnee), pixelPoint(.rightAnkle)].compactMap { $0 }
-            return [left, right].filter { !$0.isEmpty }
-        }
-
-        private func arm(_ joints: (Joint, Joint, Joint)) -> (shoulder: CGPoint, elbow: CGPoint, wrist: CGPoint)? {
-            guard let shoulder = pixelPoint(joints.0), let elbow = pixelPoint(joints.1),
-                  let wrist = pixelPoint(joints.2) else { return nil }
-            return (shoulder, elbow, wrist)
-        }
-
-        private func pixelPoint(_ joint: Joint) -> CGPoint? {
-            points[joint].map { CGPoint(x: $0.x * imageSize.width, y: $0.y * imageSize.height) }
-        }
     }
 
     static func previewRect(image: CGSize, in canvas: CGSize) -> CGRect {

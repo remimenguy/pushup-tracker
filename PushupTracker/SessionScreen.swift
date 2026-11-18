@@ -16,6 +16,7 @@ struct SessionScreen: View {
     @State private var cameraTotal = 0
     @State private var reps = 0
     @State private var deadline: Date?
+    @State private var countdownEnd: Date?
     @State private var workout: Workout?
     @State private var isFinishing = false
     @State private var isSaved = false
@@ -31,6 +32,18 @@ struct SessionScreen: View {
                         cameraPanel
                         if let deadline {
                             liveControls(deadline)
+                        } else if let countdownEnd {
+                            TimelineView(.periodic(from: .now, by: 1)) { context in
+                                let seconds = max(1, Int(ceil(countdownEnd.timeIntervalSince(context.date))))
+                                VStack(spacing: 6) {
+                                    Text(seconds, format: .number)
+                                        .font(.system(.largeTitle, design: .rounded, weight: .heavy))
+                                        .foregroundStyle(Palette.accent)
+                                    Text("Mets-toi en position haute, bras tendus.")
+                                        .font(.subheadline)
+                                }
+                                .frame(maxWidth: .infinity)
+                            }
                         } else {
                             Picker("Angle de la caméra", selection: $mode) {
                                 ForEach(CameraEngine.Mode.allCases, id: \.self) { angle in
@@ -42,9 +55,11 @@ struct SessionScreen: View {
                                 .font(.subheadline)
                                 .foregroundStyle(Palette.muted)
                             Button("Lancer le compteur") {
-                                deadline = Date.now.addingTimeInterval(Double(plan.minutes * 60))
-                                UIApplication.shared.isIdleTimerDisabled = true
-                                camera.beginCounting()
+                                if mode == .front && status != .denied && status != .unavailable {
+                                    countdownEnd = Date.now.addingTimeInterval(4)
+                                } else {
+                                    beginWorkout()
+                                }
                             }
                             .buttonStyle(ActionButtonStyle())
                         }
@@ -81,6 +96,16 @@ struct SessionScreen: View {
             } else {
                 pose = nil
                 camera.stop()
+            }
+        }
+        .task(id: countdownEnd) {
+            guard let countdownEnd else { return }
+            do {
+                try await Task.sleep(for: .seconds(max(0, countdownEnd.timeIntervalSinceNow)))
+                beginWorkout()
+                self.countdownEnd = nil
+            } catch {
+                return
             }
         }
         .task(id: deadline) {
@@ -160,7 +185,7 @@ struct SessionScreen: View {
     private var captureInstructions: String {
         switch mode {
         case .front:
-            "Place l’iPhone debout face à toi, un peu surélevé et incliné vers le sol. Recule jusqu’à voir tes mains et tes pieds."
+            "Pose l’iPhone debout près du sol, face à toi. Garde ton visage dans le cadre en haut et en bas."
         case .side:
             "Place l’iPhone de profil, à hauteur du sol. Garde le bras et la hanche visibles."
         }
@@ -177,11 +202,10 @@ struct SessionScreen: View {
         switch status {
         case .framing: mode == .front ? "Cadre-toi de face" : "Cadre-toi de profil"
         case .searching: "Place ton bras et ta hanche dans le cadre"
-        case .ready, .front(_, _, true, _): "Position détectée"
+        case .ready: "Position détectée"
+        case .front(_, _, true, _): "Visage détecté"
         case .front(_, _, false, true): "Suivi partiel · remonte pour valider"
-        case .front(let arms, _, false, false) where arms < 2: "Garde tes deux bras dans le cadre"
-        case .front(_, 0, false, false): "Surélève l’iPhone pour voir tes jambes"
-        case .front: "Mets-toi en position de pompe"
+        case .front: "Garde ton visage dans le cadre"
         case .denied, .unavailable: "Caméra indisponible · saisie manuelle possible"
         }
     }
@@ -249,6 +273,12 @@ struct SessionScreen: View {
         guard newTotal > cameraTotal else { return }
         reps += newTotal - cameraTotal
         cameraTotal = newTotal
+    }
+
+    private func beginWorkout() {
+        deadline = Date.now.addingTimeInterval(Double(plan.minutes * 60))
+        UIApplication.shared.isIdleTimerDisabled = true
+        camera.beginCounting()
     }
 
     private func finish(at date: Date) {
