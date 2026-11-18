@@ -4,13 +4,21 @@ import Foundation
 import Vision
 
 final class CameraEngine: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, @unchecked Sendable {
+    enum Mode: String, CaseIterable, Sendable {
+        case front, side
+
+        var title: String { self == .front ? "De face" : "De profil" }
+    }
+
     enum Status: Equatable, Sendable {
         case framing, searching, ready, denied, unavailable
+        case front(arms: Int, legs: Int, inPosition: Bool)
     }
 
     struct Update: Equatable, Sendable {
         let status: Status
         let repetitions: Int
+        let pose: PoseGeometry.Frame?
     }
 
     let session = AVCaptureSession()
@@ -21,6 +29,9 @@ final class CameraEngine: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
     // Capture and analysis state is confined to queue.
     private var isConfigured = false
     private var isCounting = false
+    private var mode = Mode.front
+    private var frontCounter = FrontPushUpCounter()
+    private var lastPose: PoseGeometry.Frame?
     private var repetitions = 0
     private var lastUpdate: Update?
     private var lastAnalysisAt = -Double.infinity
@@ -50,7 +61,7 @@ final class CameraEngine: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
             guard allowed else { publish(.denied); return }
             guard configureIfNeeded() else { publish(.unavailable); return }
             if !session.isRunning { session.startRunning() }
-            publish(session.isRunning ? (isCounting ? .searching : .framing) : .unavailable)
+            publish(session.isRunning ? .framing : .unavailable)
         }
     }
 
@@ -72,13 +83,19 @@ final class CameraEngine: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
         }
     }
 
+    func setMode(_ mode: Mode) {
+        queue.async { [self] in
+            guard self.mode != mode else { return }
+            self.mode = mode
+            resetTracking()
+            if session.isRunning { publish(.framing) }
+        }
+    }
+
     func beginCounting() {
         queue.async { [self] in
             isCounting = true
             resetTracking()
-            if session.isRunning {
-                publish(.searching)
-            }
         }
     }
 
@@ -104,13 +121,17 @@ final class CameraEngine: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
         session.addOutput(output)
         if let connection = output.connection(with: .video), connection.isVideoRotationAngleSupported(90) {
             connection.videoRotationAngle = 90
+            if connection.isVideoMirroringSupported {
+                connection.automaticallyAdjustsVideoMirroring = false
+                connection.isVideoMirrored = true
+            }
         }
         isConfigured = true
         return true
     }
 
     func captureOutput(_ output: AVCaptureOutput, didOutput buffer: CMSampleBuffer, from connection: AVCaptureConnection) {
-        guard isCounting, let image = CMSampleBufferGetImageBuffer(buffer) else { return }
+        guard let image = CMSampleBufferGetImageBuffer(buffer) else { return }
         let now = ProcessInfo.processInfo.systemUptime
         guard now - lastAnalysisAt >= 1.0 / 16 else { return }
         lastAnalysisAt = now
@@ -120,28 +141,49 @@ final class CameraEngine: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
         let width = CVPixelBufferGetWidth(image)
         let height = CVPixelBufferGetHeight(image)
         let size = orientation == .up ? CGSize(width: width, height: height) : CGSize(width: height, height: width)
-        let measurements: [Arm: Measurement]
+        let joints = recognizedJoints(using: handler)
+        let points = Dictionary(uniqueKeysWithValues: Self.displayJoints.compactMap { joint, key -> (PoseGeometry.Joint, CGPoint)? in
+            guard let point = joints[key], point.confidence >= (joint.isLegJoint ? 0.25 : 0.35),
+                  (0...1).contains(point.x), (0...1).contains(point.y) else { return nil }
+            return (joint, point.location)
+        })
+        let pose = PoseGeometry.Frame(imageSize: size, points: points)
+        lastPose = pose.smoothed(from: lastPose)
+
+        switch mode {
+        case .front:
+            let measurement = pose.frontMeasurement
+            if isCounting, frontCounter.update(measurement, at: now) { repetitions += 1 }
+            publish(.front(arms: pose.visibleArms, legs: pose.visibleLegs, inPosition: measurement != nil), pose: lastPose)
+        case .side:
+            analyzeSide(joints, size: size, at: now)
+        }
+    }
+
+    private func recognizedJoints(using handler: VNImageRequestHandler) -> [VNHumanBodyPoseObservation.JointName: VNRecognizedPoint] {
         do {
             try handler.perform([poseRequest])
-            if let person = poseRequest.results?.first, poseRequest.results?.count == 1 {
-                measurements = Dictionary(uniqueKeysWithValues: Arm.allCases.compactMap { arm in
-                    arm.measurement(of: person, size: size).map { (arm, $0) }
-                })
-            } else {
-                measurements = [:]
-            }
+            guard let results = poseRequest.results, results.count == 1 else { return [:] }
+            return try results[0].recognizedPoints(.all)
         } catch {
-            measurements = [:]
+            return [:]
         }
+    }
 
+    private func analyzeSide(
+        _ joints: [VNHumanBodyPoseObservation.JointName: VNRecognizedPoint], size: CGSize, at now: TimeInterval
+    ) {
+        let measurements = Dictionary(uniqueKeysWithValues: Arm.allCases.compactMap { arm in
+            arm.measurement(of: joints, size: size).map { (arm, $0) }
+        })
         if now - lastSideAt > 0.45 {
             trackedSide = measurements.max { $0.value.confidence < $1.value.confidence }?.key
             counter = PushUpCounter()
         }
         let angle = trackedSide.flatMap { measurements[$0]?.angle }
         if angle != nil { lastSideAt = now }
-        if counter.update(angle: angle, at: now) { repetitions += 1 }
-        publish(angle == nil ? .searching : .ready)
+        if isCounting, counter.update(angle: angle, at: now) { repetitions += 1 }
+        publish(angle == nil ? .searching : .ready, pose: lastPose)
     }
 
     private func resetTracking() {
@@ -149,14 +191,23 @@ final class CameraEngine: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
         lastSideAt = -.infinity
         trackedSide = nil
         counter = PushUpCounter()
+        frontCounter = FrontPushUpCounter()
+        lastPose = nil
     }
 
-    private func publish(_ status: Status) {
-        let update = Update(status: status, repetitions: repetitions)
+    private func publish(_ status: Status, pose: PoseGeometry.Frame? = nil) {
+        let update = Update(status: status, repetitions: repetitions, pose: pose)
         guard update != lastUpdate else { return }
         lastUpdate = update
         continuation.yield(update)
     }
+
+    private static let displayJoints: [(PoseGeometry.Joint, VNHumanBodyPoseObservation.JointName)] = [
+        (.leftShoulder, .leftShoulder), (.leftElbow, .leftElbow), (.leftWrist, .leftWrist),
+        (.leftHip, .leftHip), (.leftKnee, .leftKnee), (.leftAnkle, .leftAnkle),
+        (.rightShoulder, .rightShoulder), (.rightElbow, .rightElbow), (.rightWrist, .rightWrist),
+        (.rightHip, .rightHip), (.rightKnee, .rightKnee), (.rightAnkle, .rightAnkle)
+    ]
 
     private struct Measurement {
         let angle: Double
@@ -166,13 +217,15 @@ final class CameraEngine: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
     private enum Arm: CaseIterable {
         case left, right
 
-        func measurement(of person: VNHumanBodyPoseObservation, size: CGSize) -> Measurement? {
-            let joints: [VNHumanBodyPoseObservation.JointName] = switch self {
+        func measurement(
+            of joints: [VNHumanBodyPoseObservation.JointName: VNRecognizedPoint], size: CGSize
+        ) -> Measurement? {
+            let names: [VNHumanBodyPoseObservation.JointName] = switch self {
             case .left: [.leftShoulder, .leftElbow, .leftWrist, .leftHip]
             case .right: [.rightShoulder, .rightElbow, .rightWrist, .rightHip]
             }
-            let points = joints.compactMap { try? person.recognizedPoint($0) }
-            guard points.count == joints.count,
+            let points = names.compactMap { joints[$0] }
+            guard points.count == names.count,
                   let confidence = points.map(\.confidence).min(), confidence >= 0.35 else { return nil }
 
             let scaled = points.map { CGPoint(x: $0.x * size.width, y: $0.y * size.height) }

@@ -10,6 +10,8 @@ struct SessionScreen: View {
     @Environment(\.openURL) private var openURL
     @Environment(\.scenePhase) private var scenePhase
     @State private var camera = CameraEngine()
+    @State private var mode = CameraEngine.Mode.front
+    @State private var pose: PoseGeometry.Frame?
     @State private var status = CameraEngine.Status.framing
     @State private var cameraTotal = 0
     @State private var reps = 0
@@ -30,7 +32,13 @@ struct SessionScreen: View {
                         if let deadline {
                             liveControls(deadline)
                         } else {
-                            Text("Pose l’iPhone à la verticale, à hauteur du sol. Place-toi de profil, avec le bras et la hanche visibles.")
+                            Picker("Angle de la caméra", selection: $mode) {
+                                ForEach(CameraEngine.Mode.allCases, id: \.self) { angle in
+                                    Text(angle.title).tag(angle)
+                                }
+                            }
+                            .pickerStyle(.segmented)
+                            Text(captureInstructions)
                                 .font(.subheadline)
                                 .foregroundStyle(Palette.muted)
                             Button("Lancer le compteur") {
@@ -60,13 +68,18 @@ struct SessionScreen: View {
             for await update in camera.updates {
                 guard !Task.isCancelled else { return }
                 status = update.status
+                pose = update.pose
                 applyCameraCount(update.repetitions)
             }
+        }
+        .onChange(of: mode) { _, newMode in
+            camera.setMode(newMode)
         }
         .task(id: scenePhase) {
             if scenePhase == .active, workout == nil, !isFinishing {
                 await camera.start()
             } else {
+                pose = nil
                 camera.stop()
             }
         }
@@ -99,16 +112,33 @@ struct SessionScreen: View {
                         .font(.system(size: 37, weight: .light))
                         .foregroundStyle(Palette.muted)
                 } else {
-                    CameraPreview(session: camera.session)
+                    CameraPreview(session: camera.session, hasVideo: pose != nil)
                         .accessibilityHidden(true)
+                    if let pose {
+                        PoseOverlay(frame: pose)
+                            .allowsHitTesting(false)
+                            .accessibilityHidden(true)
+                    }
                 }
             }
             .frame(height: 300)
             .clipShape(RoundedRectangle(cornerRadius: 22))
 
-            Label(cameraMessage, systemImage: status == .ready ? "checkmark.circle.fill" : "viewfinder")
+            if case let .front(arms, legs, _) = status {
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 12) {
+                        limbStatus("Bras", count: arms, color: Palette.accent)
+                        limbStatus("Jambes", count: legs, color: .cyan)
+                    }
+                    VStack(alignment: .leading, spacing: 4) {
+                        limbStatus("Bras", count: arms, color: Palette.accent)
+                        limbStatus("Jambes", count: legs, color: .cyan)
+                    }
+                }
+            }
+            Label(cameraMessage, systemImage: trackingIsReady ? "checkmark.circle.fill" : "viewfinder")
                 .font(.subheadline.weight(.medium))
-                .foregroundStyle(status == .ready ? Palette.accent : Palette.muted)
+                .foregroundStyle(trackingIsReady ? Palette.accent : Palette.muted)
 
             if status == .denied {
                 Button("Autoriser la caméra") {
@@ -119,11 +149,38 @@ struct SessionScreen: View {
         }
     }
 
+    private func limbStatus(_ label: String, count: Int, color: Color) -> some View {
+        Label("\(label) \(count)/2", systemImage: count == 2 ? "checkmark.circle.fill" : "circle.dashed")
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(count > 0 ? color : Palette.muted)
+            .fixedSize(horizontal: true, vertical: false)
+            .accessibilityLabel("\(label) : \(count) sur 2")
+    }
+
+    private var captureInstructions: String {
+        switch mode {
+        case .front:
+            "Place l’iPhone debout face à toi, un peu surélevé et incliné vers le sol. Recule jusqu’à voir tes mains et tes pieds."
+        case .side:
+            "Place l’iPhone de profil, à hauteur du sol. Garde le bras et la hanche visibles."
+        }
+    }
+
+    private var trackingIsReady: Bool {
+        switch status {
+        case .ready, .front(_, _, true): true
+        default: false
+        }
+    }
+
     private var cameraMessage: String {
         switch status {
-        case .framing: "Cadre-toi de profil"
+        case .framing: mode == .front ? "Cadre-toi de face" : "Cadre-toi de profil"
         case .searching: "Place ton bras et ta hanche dans le cadre"
-        case .ready: "Position détectée"
+        case .ready, .front(_, _, true): "Position détectée"
+        case .front(let arms, _, false) where arms < 2: "Garde tes deux bras dans le cadre"
+        case .front(_, 0, false): "Surélève l’iPhone pour voir tes jambes"
+        case .front: "Mets-toi en position de pompe"
         case .denied, .unavailable: "Caméra indisponible · saisie manuelle possible"
         }
     }
@@ -165,6 +222,7 @@ struct SessionScreen: View {
                 .buttonStyle(ActionButtonStyle())
         }
         .disabled(isFinishing)
+        .sensoryFeedback(.increase, trigger: cameraTotal)
     }
 
     private func summary(_ workout: Workout) -> some View {
@@ -219,6 +277,7 @@ struct SessionScreen: View {
 
 private struct CameraPreview: UIViewRepresentable {
     let session: AVCaptureSession
+    let hasVideo: Bool
 
     func makeUIView(context: Context) -> PreviewSurface {
         let view = PreviewSurface()
@@ -228,7 +287,7 @@ private struct CameraPreview: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: PreviewSurface, context: Context) {
-        uiView.orient()
+        if hasVideo { uiView.orient() }
     }
 
     final class PreviewSurface: UIView {
@@ -246,7 +305,54 @@ private struct CameraPreview: UIViewRepresentable {
 
         func orient() {
             if let connection = preview.connection, connection.isVideoRotationAngleSupported(90) {
-                connection.videoRotationAngle = 90
+                if connection.videoRotationAngle != 90 { connection.videoRotationAngle = 90 }
+                if connection.isVideoMirroringSupported {
+                    if connection.automaticallyAdjustsVideoMirroring {
+                        connection.automaticallyAdjustsVideoMirroring = false
+                    }
+                    if !connection.isVideoMirrored { connection.isVideoMirrored = true }
+                }
+            }
+        }
+    }
+}
+
+private struct PoseOverlay: View {
+    let frame: PoseGeometry.Frame
+    private typealias Joint = PoseGeometry.Joint
+
+    private static let armSegments: [(Joint, Joint)] = [
+        (.leftShoulder, .leftElbow), (.leftElbow, .leftWrist),
+        (.rightShoulder, .rightElbow), (.rightElbow, .rightWrist),
+        (.leftShoulder, .rightShoulder)
+    ]
+
+    private static let legSegments: [(Joint, Joint)] = [
+        (.leftHip, .leftKnee), (.leftKnee, .leftAnkle),
+        (.rightHip, .rightKnee), (.rightKnee, .rightAnkle)
+    ]
+
+    var body: some View {
+        Canvas { context, size in
+            let rect = PoseGeometry.previewRect(image: frame.imageSize, in: size)
+            let points = frame.points.mapValues { PoseGeometry.previewPoint($0, in: rect) }
+
+            for (segments, color) in [(Self.armSegments, Palette.accent), (Self.legSegments, Color.cyan)] {
+                var lines = Path()
+                for (start, end) in segments {
+                    guard let a = points[start], let b = points[end] else { continue }
+                    lines.move(to: a)
+                    lines.addLine(to: b)
+                }
+                context.stroke(lines, with: .color(.black.opacity(0.66)),
+                               style: StrokeStyle(lineWidth: 7, lineCap: .round))
+                context.stroke(lines, with: .color(color), style: StrokeStyle(lineWidth: 3.5, lineCap: .round))
+            }
+
+            for (joint, point) in points {
+                let dot = Path(ellipseIn: CGRect(x: point.x - 4, y: point.y - 4, width: 8, height: 8))
+                context.fill(dot, with: .color(joint.isLegJoint ? .cyan : Palette.accent))
+                context.stroke(dot, with: .color(.black.opacity(0.75)), lineWidth: 1.5)
             }
         }
     }

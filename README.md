@@ -10,7 +10,7 @@
 ## Une séance en trois étapes
 
 1. Dans **Aujourd’hui**, touche **Démarrer une séance**.
-2. Pose ton iPhone à la verticale, à hauteur du sol. Mets-toi de profil face à la caméra avec l’épaule, le coude, le poignet et la hanche visibles. Touche **Lancer le compteur**, puis commence bras tendus.
+2. En mode **De face**, place l’iPhone face à toi, un peu surélevé et incliné vers le sol. Vérifie que tes mains et tes pieds entrent dans le cadre. Les lignes vertes suivent tes bras, les lignes bleues suivent tes jambes. Touche **Lancer le compteur**, puis commence bras tendus.
 3. Touche **Terminer et enregistrer**. Les boutons **+** et **−** permettent de corriger le total de la séance ou de le saisir à la main.
 
 | Écran | Ce que tu peux y faire |
@@ -31,7 +31,7 @@ Le projet Xcode est inclus. XcodeGen sert uniquement si tu veux le régénérer 
 
 ## Comptage et confidentialité
 
-AVFoundation fournit le flux de la caméra avant. [Apple Vision](https://developer.apple.com/documentation/vision/detecting-human-body-poses-in-images) repère les articulations. Le compteur valide une répétition quand le même bras part tendu, se plie puis revient tendu. Un bon éclairage et une vue de profil aident à garder les articulations visibles.
+AVFoundation fournit le flux de la caméra avant. [Apple Vision](https://developer.apple.com/documentation/vision/detecting-human-body-poses-in-images) repère les articulations et les affiche dans l’aperçu. De face, le compteur suit le mouvement des épaules par rapport aux poignets, du haut vers le bas puis de retour en haut. Il utilise aussi les jambes visibles pour vérifier le cadrage. Le mode **De profil** compte toujours à partir de l’angle du coude. Si les jambes sont masquées de face, surélève un peu le téléphone.
 
 L’analyse se fait sur l’iPhone. Les images ne sont ni enregistrées ni envoyées. Seuls les totaux et les dates des séances sont conservés dans le stockage de l’app, avec les réglages. L’app fonctionne sans compte, serveur ni dépendance tierce.
 
@@ -44,4 +44,4 @@ xcodebuild test -project 'Pushup Tracker.xcodeproj' -scheme PushupTracker \
   -destination 'platform=iOS Simulator,name=iPhone 15 Pro'
 ```
 
-Les tests couvrent les répétitions complètes et partielles, la perte de suivi, les angles du bras et le regroupement des séances par jour. Le simulateur permet de vérifier la saisie manuelle. Pour essayer le comptage vidéo, utilise un iPhone.
+Les tests couvrent les répétitions complètes et partielles, la perte de suivi, les angles du bras, le suivi de face, l’alignement de la superposition et le regroupement des séances par jour. Le simulateur permet de vérifier la saisie manuelle. Pour essayer le comptage vidéo, utilise un iPhone.
