@@ -31,6 +31,8 @@ final class CameraEngine: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
     private var isCounting = false
     private var mode = Mode.front
     private var frontCounter = FrontPushUpCounter()
+    private var leftArmTracker = FrontArmTracker()
+    private var rightArmTracker = FrontArmTracker()
     private var lastPose: PoseGeometry.Frame?
     private var repetitions = 0
     private var lastUpdate: Update?
@@ -152,8 +154,12 @@ final class CameraEngine: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
 
         switch mode {
         case .front:
-            if isCounting, frontCounter.update(left: pose.leftArm, right: pose.rightArm, at: now) {
-                repetitions += 1
+            if isCounting {
+                let left = leftArmTracker.update(observed: pose.leftArm, image: image, orientation: orientation,
+                                                 imageSize: size, at: now)
+                let right = rightArmTracker.update(observed: pose.rightArm, image: image, orientation: orientation,
+                                                   imageSize: size, at: now)
+                if frontCounter.update(left: left, right: right, at: now) { repetitions += 1 }
             }
             publish(.front(arms: pose.visibleArms, legs: pose.visibleLegs,
                            followingFlexion: isCounting && frontCounter.isFollowingFlexion), pose: lastPose)
@@ -194,6 +200,8 @@ final class CameraEngine: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
         trackedSide = nil
         counter = PushUpCounter()
         frontCounter = FrontPushUpCounter()
+        leftArmTracker = FrontArmTracker()
+        rightArmTracker = FrontArmTracker()
         lastPose = nil
     }
 

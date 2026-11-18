@@ -64,16 +64,32 @@ struct PushUpCounter {
 }
 
 struct FrontPushUpCounter {
+    struct Thresholds {
+        let extensionAngle: Double
+        let flexionAngle: Double
+        let shortReach: CGFloat
+        let returnReach: CGFloat
+        let wristTravel: CGFloat
+
+        static let standard = Self(extensionAngle: 140, flexionAngle: 123, shortReach: 0.68,
+                                   returnReach: 0.82, wristTravel: 0.38)
+    }
+
+    private let thresholds: Thresholds
     private var left = ArmCycle()
     private var right = ArmCycle()
+
+    init(thresholds: Thresholds = .standard) {
+        self.thresholds = thresholds
+    }
 
     var isFollowingFlexion: Bool {
         left.isFollowingFlexion || right.isFollowingFlexion
     }
 
     mutating func update(left: PoseGeometry.Arm?, right: PoseGeometry.Arm?, at seconds: TimeInterval) -> Bool {
-        let leftCounted = self.left.update(left, at: seconds)
-        let rightCounted = self.right.update(right, at: seconds)
+        let leftCounted = self.left.update(left, at: seconds, thresholds: thresholds)
+        let rightCounted = self.right.update(right, at: seconds, thresholds: thresholds)
 
         // An arm that is still returning cannot count the same repetition later.
         if leftCounted && !rightCounted { self.right = ArmCycle() }
@@ -82,51 +98,60 @@ struct FrontPushUpCounter {
     }
 
     private struct ArmCycle {
-        private var cycle = PushUpCounter(trackingTimeout: 0.85)
+        private var cycle = PushUpCounter(trackingTimeout: .infinity)
         private var extensionPose: PoseGeometry.Arm?
-        private var lastFlexionAt: TimeInterval?
+        private var newPlacement: (arm: PoseGeometry.Arm, since: TimeInterval)?
 
         var isFollowingFlexion: Bool { cycle.phase == .waitingForReturn }
 
-        mutating func update(_ arm: PoseGeometry.Arm?, at seconds: TimeInterval) -> Bool {
-            let phase = cycle.phase
-            let position = arm.flatMap { classify($0, relativeTo: extensionPose) }
-            // Keep a low candidate across a dropped frame. Only another measured low frame can confirm it.
-            if position == nil, phase == .waitingForBottom,
-               let lastFlexionAt, seconds - lastFlexionAt <= 0.22 {
-                return false
-            }
-            lastFlexionAt = position == .bottom ? seconds : nil
-            let counted = cycle.update(position: position, at: seconds)
+        mutating func update(_ arm: PoseGeometry.Arm?, at seconds: TimeInterval, thresholds: Thresholds) -> Bool {
+            // Missing observations pause the sequence. A new, observed hand placement can replace it.
+            guard let arm else { return false }
+            let angle = arm.elbowAngle
+            let isExtended = (angle.map { $0 >= thresholds.extensionAngle } ?? false) &&
+                arm.verticalReach >= arm.reach * 0.4
 
-            if cycle.phase == .waitingForTop {
-                extensionPose = nil
-            } else if phase == .waitingForTop || counted {
+            if let extensionPose, arm.wristDistance(from: extensionPose) > extensionPose.reach * thresholds.wristTravel {
+                guard isExtended else {
+                    newPlacement = nil
+                    return false
+                }
+                if let newPlacement,
+                   arm.wristDistance(from: newPlacement.arm) <= newPlacement.arm.reach * thresholds.wristTravel {
+                    guard seconds - newPlacement.since >= 0.085 else { return false }
+                    self = ArmCycle()
+                    cycle.update(position: .top, at: newPlacement.since)
+                } else {
+                    newPlacement = (arm, seconds)
+                    return false
+                }
+            }
+            newPlacement = nil
+
+            let phase = cycle.phase
+            let position: PushUpCounter.Position
+            if let reference = extensionPose {
+                let reach = reference.reach
+                // A bend toward the camera compresses the arm's projection, even if its angle looks straight.
+                let isForeshortened = arm.reach <= reach * thresholds.shortReach &&
+                    reference.verticalReach - arm.verticalReach >= reach * 0.20
+                if (angle.map { $0 <= thresholds.flexionAngle } ?? false) || isForeshortened {
+                    position = .bottom
+                } else if (isExtended && arm.reach >= reach * thresholds.returnReach) ||
+                            (angle.map { $0 >= thresholds.extensionAngle - 10 } == true && arm.reach >= reach * 0.94) {
+                    position = .top
+                } else {
+                    position = .middle
+                }
+            } else {
+                position = isExtended ? .top : .middle
+            }
+
+            let counted = cycle.update(position: position, at: seconds)
+            if (phase == .waitingForTop && cycle.phase == .waitingForBottom) || counted {
                 extensionPose = arm
             }
             return counted
-        }
-
-        private func classify(_ arm: PoseGeometry.Arm, relativeTo extensionPose: PoseGeometry.Arm?) -> PushUpCounter.Position? {
-            let angle = arm.elbowAngle
-            guard let extensionPose else {
-                guard let angle else { return nil }
-                return angle >= 140 && arm.verticalReach >= arm.reach * 0.4 ? .top : .middle
-            }
-
-            let reach = extensionPose.reach
-            guard arm.wristDistance(from: extensionPose) <= reach * 0.38 else { return nil }
-
-            // An elbow can bend toward the camera without changing its projected angle much.
-            let isForeshortened = arm.reach <= reach * 0.68 &&
-                extensionPose.verticalReach - arm.verticalReach >= reach * 0.20
-            if (angle.map { $0 <= 123 } ?? false) || isForeshortened { return .bottom }
-            guard let angle else { return .middle }
-            if (angle >= 140 && arm.reach >= reach * 0.82) ||
-                (angle >= 130 && arm.reach >= reach * 0.94) {
-                return .top
-            }
-            return .middle
         }
     }
 }

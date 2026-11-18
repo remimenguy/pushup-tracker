@@ -203,6 +203,7 @@ struct SessionScreen: View {
         case .framing: mode == .front ? "Cadre-toi de face" : "Cadre-toi de profil"
         case .searching: "Place ton bras et ta hanche dans le cadre"
         case .ready: "Position détectée"
+        case .front(0, _, true): "Suivi en pause · flexion mémorisée"
         case .front(_, _, true): "Retends les bras pour valider"
         case .front(1...2, _, false): "Suivi des bras actif"
         case .front: "Cadre au moins un bras entier"

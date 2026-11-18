@@ -31,7 +31,7 @@ Le projet Xcode est inclus. XcodeGen sert uniquement si tu veux le régénérer 
 
 ## Comptage et confidentialité
 
-AVFoundation fournit le flux de la caméra avant. [Apple Vision](https://developer.apple.com/documentation/vision/body-landmarks) repère les articulations. De face, chaque bras est suivi séparément et la répétition est comptée quand un même bras se plie puis se retend. La distance apparente entre le poignet et l’épaule aide quand le coude se plie dans l’axe de la caméra. Le visage et les jambes sont facultatifs. Le mode **De profil** utilise aussi l’angle du coude.
+AVFoundation fournit le flux de la caméra avant. [Apple Vision](https://developer.apple.com/documentation/vision/body-landmarks) repère les articulations. De face, chaque bras est suivi séparément et la répétition est comptée quand un même bras se plie puis se retend. La distance apparente entre le poignet et l’épaule aide quand le coude se plie dans l’axe de la caméra. Le visage et les jambes sont facultatifs. Si les articulations disparaissent, Vision essaie de suivre brièvement les régions de l’épaule et du poignet dans l’image. Le compteur garde sa progression jusqu’au retour du même bras ou jusqu’à la détection d’un nouveau placement des mains. Le mode **De profil** utilise aussi l’angle du coude.
 
 L’analyse se fait sur l’iPhone. Les images ne sont ni enregistrées ni envoyées. Seuls les totaux et les dates des séances sont conservés dans le stockage de l’app, avec les réglages. L’app fonctionne sans compte, serveur ni dépendance tierce.
 
@@ -45,3 +45,17 @@ xcodebuild test -project 'Pushup Tracker.xcodeproj' -scheme PushupTracker \
 ```
 
 Les tests couvrent les répétitions complètes et partielles, la perte de suivi, les angles du bras, le suivi de face, l’alignement de la superposition et le regroupement des séances par jour. Le simulateur permet de vérifier la saisie manuelle. Pour essayer le comptage vidéo, utilise un iPhone.
+
+
+### Vérification sur vidéos de face
+
+Pour la version 1.5, les seuils du compteur ont été évalués par recherche sur grille avec deux séquences frontales de cinq pompes et les images traitées par Vision. Les seuils existants ont été retenus. La correction porte sur la continuité du compteur et sur le suivi visuel lorsque les articulations disparaissent.
+
+| Extrait annoté | Attendu | Version 1.4 | Version 1.5 |
+| --- | ---: | ---: | ---: |
+| Séquence 17, premières 12,4 s | 5 | 5 | 5 |
+| Séquence 18, premières 12,4 s | 5 | 0 | 5 |
+| Démonstration Navy, 1 min 25,8 s à 1 min 37 s, participant gardé à part | 3 | 3 | 3 |
+| Même démonstration, observations masquées pendant 1,35 s en cours de pompe | 3 | 2 | 3 |
+
+Les séquences 17 et 18 viennent du [jeu de données AI Fitness Trainer](https://github.com/kreatain/AI-Fitness-Trainer/tree/main/data/pushup). L’extrait gardé à part vient de la [démonstration Navy publiée par DVIDS](https://www.dvidshub.net/video/283728/push-up-demonstration). Ces mesures portent sur un petit ensemble de vidéos et ne prédisent pas les résultats pour tous les angles et éclairages.
