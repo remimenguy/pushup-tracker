@@ -12,7 +12,7 @@ final class CameraEngine: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
 
     enum Status: Equatable, Sendable {
         case framing, searching, ready, denied, unavailable
-        case front(arms: Int, legs: Int, faceDetected: Bool, followingDescent: Bool)
+        case front(arms: Int, legs: Int, followingFlexion: Bool)
     }
 
     struct Update: Equatable, Sendable {
@@ -31,7 +31,6 @@ final class CameraEngine: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
     private var isCounting = false
     private var mode = Mode.front
     private var frontCounter = FrontPushUpCounter()
-    private let headTracker = FrontHeadTracker()
     private var lastPose: PoseGeometry.Frame?
     private var repetitions = 0
     private var lastUpdate: Update?
@@ -153,10 +152,11 @@ final class CameraEngine: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate
 
         switch mode {
         case .front:
-            let head = headTracker.sample(using: handler, imageSize: size, bodyJoints: joints)
-            if isCounting, frontCounter.update(head, at: now) { repetitions += 1 }
-            publish(.front(arms: pose.visibleArms, legs: pose.visibleLegs, faceDetected: head?.isUsable == true,
-                           followingDescent: isCounting && frontCounter.isFollowingDescent), pose: lastPose)
+            if isCounting, frontCounter.update(left: pose.leftArm, right: pose.rightArm, at: now) {
+                repetitions += 1
+            }
+            publish(.front(arms: pose.visibleArms, legs: pose.visibleLegs,
+                           followingFlexion: isCounting && frontCounter.isFollowingFlexion), pose: lastPose)
         case .side:
             analyzeSide(joints, size: size, at: now)
         }

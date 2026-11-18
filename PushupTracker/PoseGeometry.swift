@@ -31,17 +31,32 @@ enum PoseGeometry {
         }
     }
 
+    struct Arm {
+        let shoulder: CGPoint
+        let elbow: CGPoint?
+        let wrist: CGPoint
+
+        var reach: CGFloat { hypot(shoulder.x - wrist.x, shoulder.y - wrist.y) }
+        var verticalReach: CGFloat { shoulder.y - wrist.y }
+
+        var elbowAngle: Double? {
+            elbow.flatMap { PoseGeometry.elbowAngle(shoulder: shoulder, elbow: $0, wrist: wrist) }
+        }
+
+        func wristDistance(from reference: Arm) -> CGFloat {
+            hypot(wrist.x - reference.wrist.x, wrist.y - reference.wrist.y)
+        }
+    }
+
     struct Frame: Equatable, Sendable {
         let imageSize: CGSize
         let points: [Joint: CGPoint]
 
-        private static let arms: [(Joint, Joint, Joint)] = [
-            (.leftShoulder, .leftElbow, .leftWrist),
-            (.rightShoulder, .rightElbow, .rightWrist)
-        ]
+        var leftArm: Arm? { arm(shoulder: .leftShoulder, elbow: .leftElbow, wrist: .leftWrist) }
+        var rightArm: Arm? { arm(shoulder: .rightShoulder, elbow: .rightElbow, wrist: .rightWrist) }
 
         var visibleArms: Int {
-            Self.arms.filter { points[$0.0] != nil && points[$0.1] != nil && points[$0.2] != nil }.count
+            (leftArm?.elbowAngle != nil ? 1 : 0) + (rightArm?.elbowAngle != nil ? 1 : 0)
         }
 
         var visibleLegs: Int {
@@ -61,6 +76,14 @@ enum PoseGeometry {
                                          y: (point.y * 0.7 + last.y * 0.3))
             }
             return Frame(imageSize: imageSize, points: smoothed)
+        }
+        private func arm(shoulder: Joint, elbow: Joint, wrist: Joint) -> Arm? {
+            guard let start = pixelPoint(shoulder), let end = pixelPoint(wrist) else { return nil }
+            return Arm(shoulder: start, elbow: pixelPoint(elbow), wrist: end)
+        }
+
+        private func pixelPoint(_ joint: Joint) -> CGPoint? {
+            points[joint].map { CGPoint(x: $0.x * imageSize.width, y: $0.y * imageSize.height) }
         }
 
     }

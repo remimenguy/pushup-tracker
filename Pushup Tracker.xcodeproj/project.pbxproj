@@ -7,7 +7,6 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		085FA7E197E005C21338C043 /* FrontHeadTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81AE0F7E912FCF186B4233C1 /* FrontHeadTracker.swift */; };
 		0AA4B1CD94FFEBE504A5133E /* TodayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22BFF7C303D8F91538844F34 /* TodayView.swift */; };
 		249F878014CDE05E71C73FE2 /* PoseGeometryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8635F961A8097E682E8FFAA /* PoseGeometryTests.swift */; };
 		4E1F50949594809A9147AA6F /* DailyPlan.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA49740B3AE5EB4EC51614B1 /* DailyPlan.swift */; };
@@ -42,7 +41,6 @@
 		512AA1ABE4A42C9446A71721 /* PoseGeometry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PoseGeometry.swift; sourceTree = "<group>"; };
 		527B47A51CB0F82A79FA7AE4 /* SettingsScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsScreen.swift; sourceTree = "<group>"; };
 		7993B301C68A5BA634F627FB /* PushupTracker.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = PushupTracker.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		81AE0F7E912FCF186B4233C1 /* FrontHeadTracker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FrontHeadTracker.swift; sourceTree = "<group>"; };
 		875E65F21F6D3772E426BAE5 /* PushUpCounter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushUpCounter.swift; sourceTree = "<group>"; };
 		8D3358B7AC81C0EB4F9AFE8D /* PushUpCounterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushUpCounterTests.swift; sourceTree = "<group>"; };
 		8F5DCD990543A5E140334D77 /* PushupTrackerTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = PushupTrackerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -83,7 +81,6 @@
 				9D256E9BFBF04E1756BEC3E5 /* Assets.xcassets */,
 				101797BB9FCEDDA9F3CA4ED9 /* CameraEngine.swift */,
 				BA49740B3AE5EB4EC51614B1 /* DailyPlan.swift */,
-				81AE0F7E912FCF186B4233C1 /* FrontHeadTracker.swift */,
 				512AA1ABE4A42C9446A71721 /* PoseGeometry.swift */,
 				DB4F32D5E4E4857AFE297C71 /* ProgressScreen.swift */,
 				875E65F21F6D3772E426BAE5 /* PushUpCounter.swift */,
@@ -199,7 +196,6 @@
 			files = (
 				AA4ABB2EB798A3FFAF6E2005 /* CameraEngine.swift in Sources */,
 				4E1F50949594809A9147AA6F /* DailyPlan.swift in Sources */,
-				085FA7E197E005C21338C043 /* FrontHeadTracker.swift in Sources */,
 				C64A7225B93F499256632F8C /* PoseGeometry.swift in Sources */,
 				A83AC720713108B6F4E94DE1 /* ProgressScreen.swift in Sources */,
 				EA6A7D9D52C96A49A5D070B3 /* PushUpCounter.swift in Sources */,
@@ -255,7 +251,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-				CURRENT_PROJECT_VERSION = 4;
+				CURRENT_PROJECT_VERSION = 5;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = "Pushup Tracker";
 				INFOPLIST_KEY_NSCameraUsageDescription = "La caméra détecte tes mouvements pour compter tes pompes en direct.";
@@ -266,7 +262,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.3;
+				MARKETING_VERSION = 1.4;
 				PRODUCT_BUNDLE_IDENTIFIER = fr.menguy.pushuptracker;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -418,7 +414,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-				CURRENT_PROJECT_VERSION = 4;
+				CURRENT_PROJECT_VERSION = 5;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = "Pushup Tracker";
 				INFOPLIST_KEY_NSCameraUsageDescription = "La caméra détecte tes mouvements pour compter tes pompes en direct.";
@@ -429,7 +425,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.3;
+				MARKETING_VERSION = 1.4;
 				PRODUCT_BUNDLE_IDENTIFIER = fr.menguy.pushuptracker;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";

@@ -63,86 +63,70 @@ struct PushUpCounter {
     }
 }
 
-
-// Front tracking uses a calibrated eye line and a down/up hysteresis cycle.
-// Reference: https://github.com/quickpose/Flappy-Pushups-iOS-Demo-App
 struct FrontPushUpCounter {
-    struct Head {
-        /// Horizontal coordinates and widths are expressed in units of image height.
-        let x: CGFloat
-        let y: CGFloat
-        let width: CGFloat
+    private var left = ArmCycle()
+    private var right = ArmCycle()
 
-        var isUsable: Bool { x.isFinite && (0...1).contains(y) && width.isFinite && width >= 0.017 }
+    var isFollowingFlexion: Bool {
+        left.isFollowingFlexion || right.isFollowingFlexion
     }
 
-    private static let trackingTimeout: TimeInterval = 1.25
-    private var cycle = PushUpCounter(trackingTimeout: trackingTimeout)
-    private var baseline: Head?
-    private var calibration: (head: Head, since: TimeInterval)?
-    private var lastSeenAt: TimeInterval?
-    private var nearBottomAt: TimeInterval?
+    mutating func update(left: PoseGeometry.Arm?, right: PoseGeometry.Arm?, at seconds: TimeInterval) -> Bool {
+        let leftCounted = self.left.update(left, at: seconds)
+        let rightCounted = self.right.update(right, at: seconds)
 
-    var isFollowingDescent: Bool {
-        cycle.phase == .waitingForReturn || nearBottomAt != nil
+        // An arm that is still returning cannot count the same repetition later.
+        if leftCounted && !rightCounted { self.right = ArmCycle() }
+        if rightCounted && !leftCounted { self.left = ArmCycle() }
+        return leftCounted || rightCounted
     }
 
-    mutating func update(_ head: Head?, at seconds: TimeInterval) -> Bool {
-        if let lastSeenAt, seconds - lastSeenAt > Self.trackingTimeout {
-            self = Self()
+    private struct ArmCycle {
+        private var cycle = PushUpCounter(trackingTimeout: 0.85)
+        private var extensionPose: PoseGeometry.Arm?
+        private var lastFlexionAt: TimeInterval?
+
+        var isFollowingFlexion: Bool { cycle.phase == .waitingForReturn }
+
+        mutating func update(_ arm: PoseGeometry.Arm?, at seconds: TimeInterval) -> Bool {
+            let phase = cycle.phase
+            let position = arm.flatMap { classify($0, relativeTo: extensionPose) }
+            // Keep a low candidate across a dropped frame. Only another measured low frame can confirm it.
+            if position == nil, phase == .waitingForBottom,
+               let lastFlexionAt, seconds - lastFlexionAt <= 0.22 {
+                return false
+            }
+            lastFlexionAt = position == .bottom ? seconds : nil
+            let counted = cycle.update(position: position, at: seconds)
+
+            if cycle.phase == .waitingForTop {
+                extensionPose = nil
+            } else if phase == .waitingForTop || counted {
+                extensionPose = arm
+            }
+            return counted
         }
 
-        guard let head, head.isUsable else {
-            calibration = nil
-            let inferredBottom = nearBottomAt.map { seconds - $0 <= 0.30 } ?? false
-            return cycle.update(position: inferredBottom ? .bottom : nil, at: seconds)
-        }
-        lastSeenAt = seconds
+        private func classify(_ arm: PoseGeometry.Arm, relativeTo extensionPose: PoseGeometry.Arm?) -> PushUpCounter.Position? {
+            let angle = arm.elbowAngle
+            guard let extensionPose else {
+                guard let angle else { return nil }
+                return angle >= 140 && arm.verticalReach >= arm.reach * 0.4 ? .top : .middle
+            }
 
-        guard let baseline else {
-            calibrate(head, at: seconds)
-            return false
-        }
-        if abs(head.x - baseline.x) > max(baseline.width * 1.25, 0.05) {
-            self = Self()
-            lastSeenAt = seconds
-            calibrate(head, at: seconds)
-            return false
-        }
+            let reach = extensionPose.reach
+            guard arm.wristDistance(from: extensionPose) <= reach * 0.38 else { return nil }
 
-        let drop = baseline.y - head.y
-        let bottomDepth = max(baseline.width * 0.55, 0.022)
-        let returnTolerance = max(baseline.width * 0.24, 0.010)
-        nearBottomAt = drop >= bottomDepth * 0.9 ? seconds : nil
-
-        let position: PushUpCounter.Position
-        if drop >= bottomDepth {
-            position = .bottom
-        } else if abs(drop) <= returnTolerance {
-            position = .top
-        } else {
-            position = .middle
+            // An elbow can bend toward the camera without changing its projected angle much.
+            let isForeshortened = arm.reach <= reach * 0.68 &&
+                extensionPose.verticalReach - arm.verticalReach >= reach * 0.20
+            if (angle.map { $0 <= 123 } ?? false) || isForeshortened { return .bottom }
+            guard let angle else { return .middle }
+            if (angle >= 140 && arm.reach >= reach * 0.82) ||
+                (angle >= 130 && arm.reach >= reach * 0.94) {
+                return .top
+            }
+            return .middle
         }
-
-        let counted = cycle.update(position: position, at: seconds)
-        if counted {
-            self.baseline = head
-            nearBottomAt = nil
-        }
-        return counted
-    }
-
-    private mutating func calibrate(_ head: Head, at seconds: TimeInterval) {
-        guard let calibration,
-              abs(head.y - calibration.head.y) <= max(head.width * 0.12, 0.005),
-              abs(head.x - calibration.head.x) <= max(head.width * 0.20, 0.008) else {
-            calibration = (head, seconds)
-            return
-        }
-        guard seconds - calibration.since >= 0.24 else { return }
-        baseline = head
-        self.calibration = nil
-        cycle.update(position: .top, at: calibration.since)
-        cycle.update(position: .top, at: seconds)
     }
 }

@@ -10,7 +10,7 @@
 ## Une séance en trois étapes
 
 1. Dans **Aujourd’hui**, touche **Démarrer une séance**.
-2. En mode **De face**, pose l’iPhone debout près du sol, face à toi. Vérifie que ton visage reste dans le cadre en haut et en bas. Touche **Lancer le compteur** et place-toi bras tendus pendant le décompte. Les lignes vertes suivent les bras visibles et les lignes bleues suivent les jambes visibles.
+2. En mode **De face**, pose l’iPhone debout près du sol, face à toi. Garde au moins une épaule, un coude et un poignet dans le cadre. Touche **Lancer le compteur** et place-toi bras tendus pendant le décompte. Les lignes vertes suivent les bras visibles et les lignes bleues suivent les jambes visibles.
 3. Touche **Terminer et enregistrer**. Les boutons **+** et **−** permettent de corriger le total de la séance ou de le saisir à la main.
 
 | Écran | Ce que tu peux y faire |
@@ -31,9 +31,7 @@ Le projet Xcode est inclus. XcodeGen sert uniquement si tu veux le régénérer 
 
 ## Comptage et confidentialité
 
-AVFoundation fournit le flux de la caméra avant. [Apple Vision](https://developer.apple.com/documentation/vision/vndetectfacelandmarksrequest) suit la hauteur des yeux et repère les articulations affichées à l’écran. De face, le compteur prend la hauteur du visage bras tendus comme référence et valide une répétition après une descente suivie d’une remontée. La présence des jambes dans l’image est facultative. Le mode **De profil** utilise l’angle du coude.
-
-Le compteur de face reprend le principe de suivi de la ligne des yeux documenté dans la [démo iOS de QuickPose](https://github.com/quickpose/Flappy-Pushups-iOS-Demo-App), avec une implémentation Swift s’appuyant sur les API Vision d’Apple.
+AVFoundation fournit le flux de la caméra avant. [Apple Vision](https://developer.apple.com/documentation/vision/body-landmarks) repère les articulations. De face, chaque bras est suivi séparément et la répétition est comptée quand un même bras se plie puis se retend. La distance apparente entre le poignet et l’épaule aide quand le coude se plie dans l’axe de la caméra. Le visage et les jambes sont facultatifs. Le mode **De profil** utilise aussi l’angle du coude.
 
 L’analyse se fait sur l’iPhone. Les images ne sont ni enregistrées ni envoyées. Seuls les totaux et les dates des séances sont conservés dans le stockage de l’app, avec les réglages. L’app fonctionne sans compte, serveur ni dépendance tierce.
 

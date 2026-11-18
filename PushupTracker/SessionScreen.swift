@@ -149,7 +149,7 @@ struct SessionScreen: View {
             .frame(height: 300)
             .clipShape(RoundedRectangle(cornerRadius: 22))
 
-            if case let .front(arms, legs, _, _) = status {
+            if case let .front(arms, legs, _) = status {
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: 12) {
                         limbStatus("Bras", count: arms, color: Palette.accent)
@@ -185,7 +185,7 @@ struct SessionScreen: View {
     private var captureInstructions: String {
         switch mode {
         case .front:
-            "Pose l’iPhone debout près du sol, face à toi. Garde ton visage dans le cadre en haut et en bas."
+            "Pose l’iPhone debout près du sol, face à toi. Garde au moins une épaule, un coude et un poignet dans le cadre."
         case .side:
             "Place l’iPhone de profil, à hauteur du sol. Garde le bras et la hanche visibles."
         }
@@ -193,7 +193,7 @@ struct SessionScreen: View {
 
     private var trackingIsReady: Bool {
         switch status {
-        case .ready, .front(_, _, true, _): true
+        case .ready, .front(1...2, _, _): true
         default: false
         }
     }
@@ -203,9 +203,9 @@ struct SessionScreen: View {
         case .framing: mode == .front ? "Cadre-toi de face" : "Cadre-toi de profil"
         case .searching: "Place ton bras et ta hanche dans le cadre"
         case .ready: "Position détectée"
-        case .front(_, _, true, _): "Visage détecté"
-        case .front(_, _, false, true): "Suivi partiel · remonte pour valider"
-        case .front: "Garde ton visage dans le cadre"
+        case .front(_, _, true): "Retends les bras pour valider"
+        case .front(1...2, _, false): "Suivi des bras actif"
+        case .front: "Cadre au moins un bras entier"
         case .denied, .unavailable: "Caméra indisponible · saisie manuelle possible"
         }
     }
