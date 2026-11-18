@@ -1,0 +1,185 @@
+@preconcurrency import AVFoundation
+import CoreMedia
+import Foundation
+import Vision
+
+final class CameraEngine: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate, @unchecked Sendable {
+    enum Status: Equatable, Sendable {
+        case framing, searching, ready, denied, unavailable
+    }
+
+    struct Update: Equatable, Sendable {
+        let status: Status
+        let repetitions: Int
+    }
+
+    let session = AVCaptureSession()
+    let updates: AsyncStream<Update>
+
+    private let continuation: AsyncStream<Update>.Continuation
+    private let queue = DispatchQueue(label: "fr.menguy.pushuptracker.camera", qos: .userInitiated)
+    // Capture and analysis state is confined to queue.
+    private var isConfigured = false
+    private var isCounting = false
+    private var repetitions = 0
+    private var lastUpdate: Update?
+    private var lastAnalysisAt = -Double.infinity
+    private var lastSideAt = -Double.infinity
+    private var trackedSide: Arm?
+    private var counter = PushUpCounter()
+    private let poseRequest = VNDetectHumanBodyPoseRequest()
+
+    override init() {
+        (updates, continuation) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(1))
+        super.init()
+    }
+
+    deinit {
+        continuation.finish()
+    }
+
+    func start() async {
+        let allowed: Bool
+        switch AVCaptureDevice.authorizationStatus(for: .video) {
+        case .authorized: allowed = true
+        case .notDetermined: allowed = await AVCaptureDevice.requestAccess(for: .video)
+        default: allowed = false
+        }
+        guard !Task.isCancelled else { return }
+        queue.async { [self] in
+            guard allowed else { publish(.denied); return }
+            guard configureIfNeeded() else { publish(.unavailable); return }
+            if !session.isRunning { session.startRunning() }
+            publish(session.isRunning ? (isCounting ? .searching : .framing) : .unavailable)
+        }
+    }
+
+    func stop() {
+        queue.async { [self] in
+            resetTracking()
+            if session.isRunning { session.stopRunning() }
+        }
+    }
+
+    func finishCounting() async -> Int {
+        await withCheckedContinuation { result in
+            queue.async { [self] in
+                isCounting = false
+                resetTracking()
+                if session.isRunning { session.stopRunning() }
+                result.resume(returning: repetitions)
+            }
+        }
+    }
+
+    func beginCounting() {
+        queue.async { [self] in
+            isCounting = true
+            resetTracking()
+            if session.isRunning {
+                publish(.searching)
+            }
+        }
+    }
+
+    private func configureIfNeeded() -> Bool {
+        if isConfigured { return true }
+        guard let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front),
+              let input = try? AVCaptureDeviceInput(device: device)
+        else { return false }
+
+        let output = AVCaptureVideoDataOutput()
+        output.alwaysDiscardsLateVideoFrames = true
+        output.setSampleBufferDelegate(self, queue: queue)
+
+        session.beginConfiguration()
+        defer { session.commitConfiguration() }
+        if session.canSetSessionPreset(.vga640x480) { session.sessionPreset = .vga640x480 }
+        guard session.canAddInput(input) else { return false }
+        session.addInput(input)
+        guard session.canAddOutput(output) else {
+            session.removeInput(input)
+            return false
+        }
+        session.addOutput(output)
+        if let connection = output.connection(with: .video), connection.isVideoRotationAngleSupported(90) {
+            connection.videoRotationAngle = 90
+        }
+        isConfigured = true
+        return true
+    }
+
+    func captureOutput(_ output: AVCaptureOutput, didOutput buffer: CMSampleBuffer, from connection: AVCaptureConnection) {
+        guard isCounting, let image = CMSampleBufferGetImageBuffer(buffer) else { return }
+        let now = ProcessInfo.processInfo.systemUptime
+        guard now - lastAnalysisAt >= 1.0 / 16 else { return }
+        lastAnalysisAt = now
+
+        let orientation: CGImagePropertyOrientation = connection.videoRotationAngle == 90 ? .up : .leftMirrored
+        let handler = VNImageRequestHandler(cvPixelBuffer: image, orientation: orientation)
+        let width = CVPixelBufferGetWidth(image)
+        let height = CVPixelBufferGetHeight(image)
+        let size = orientation == .up ? CGSize(width: width, height: height) : CGSize(width: height, height: width)
+        let measurements: [Arm: Measurement]
+        do {
+            try handler.perform([poseRequest])
+            if let person = poseRequest.results?.first, poseRequest.results?.count == 1 {
+                measurements = Dictionary(uniqueKeysWithValues: Arm.allCases.compactMap { arm in
+                    arm.measurement(of: person, size: size).map { (arm, $0) }
+                })
+            } else {
+                measurements = [:]
+            }
+        } catch {
+            measurements = [:]
+        }
+
+        if now - lastSideAt > 0.45 {
+            trackedSide = measurements.max { $0.value.confidence < $1.value.confidence }?.key
+            counter = PushUpCounter()
+        }
+        let angle = trackedSide.flatMap { measurements[$0]?.angle }
+        if angle != nil { lastSideAt = now }
+        if counter.update(angle: angle, at: now) { repetitions += 1 }
+        publish(angle == nil ? .searching : .ready)
+    }
+
+    private func resetTracking() {
+        lastAnalysisAt = -.infinity
+        lastSideAt = -.infinity
+        trackedSide = nil
+        counter = PushUpCounter()
+    }
+
+    private func publish(_ status: Status) {
+        let update = Update(status: status, repetitions: repetitions)
+        guard update != lastUpdate else { return }
+        lastUpdate = update
+        continuation.yield(update)
+    }
+
+    private struct Measurement {
+        let angle: Double
+        let confidence: Float
+    }
+
+    private enum Arm: CaseIterable {
+        case left, right
+
+        func measurement(of person: VNHumanBodyPoseObservation, size: CGSize) -> Measurement? {
+            let joints: [VNHumanBodyPoseObservation.JointName] = switch self {
+            case .left: [.leftShoulder, .leftElbow, .leftWrist, .leftHip]
+            case .right: [.rightShoulder, .rightElbow, .rightWrist, .rightHip]
+            }
+            let points = joints.compactMap { try? person.recognizedPoint($0) }
+            guard points.count == joints.count,
+                  let confidence = points.map(\.confidence).min(), confidence >= 0.35 else { return nil }
+
+            let scaled = points.map { CGPoint(x: $0.x * size.width, y: $0.y * size.height) }
+            guard let angle = PoseGeometry.elbowAngle(
+                shoulder: scaled[0], elbow: scaled[1], wrist: scaled[2], hip: scaled[3]
+            ) else { return nil }
+            return Measurement(angle: angle, confidence: confidence)
+        }
+    }
+}
