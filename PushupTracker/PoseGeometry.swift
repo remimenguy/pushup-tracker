@@ -52,11 +52,9 @@ enum PoseGeometry {
         var visibleLegs: Int { legs.count }
 
         var frontMeasurement: FrontMeasurement? {
-            guard let left = arm(Self.arms[0]), let right = arm(Self.arms[1]) else { return nil }
-            let shoulderWidth = abs(left.shoulder.x - right.shoulder.x)
+            guard let left = arm(Self.arms[0]), let right = arm(Self.arms[1]), let shoulderWidth else { return nil }
             let wristWidth = abs(left.wrist.x - right.wrist.x)
-            guard shoulderWidth >= imageSize.width * 0.045,
-                  abs(left.shoulder.y - right.shoulder.y) <= shoulderWidth * 0.65,
+            guard abs(left.shoulder.y - right.shoulder.y) <= shoulderWidth * 0.65,
                   wristWidth >= shoulderWidth * 0.18 else { return nil }
 
             let shoulderX = (left.shoulder.x + right.shoulder.x) / 2
@@ -74,6 +72,33 @@ enum PoseGeometry {
             let shoulderY = (left.shoulder.y + right.shoulder.y) / 2
             return FrontMeasurement(relativeHeight: (shoulderY - wristY) / shoulderWidth,
                                     armsExtended: leftAngle >= 140 && rightAngle >= 140)
+        }
+
+        func shoulderDrop(from reference: Frame) -> CGFloat? {
+            guard imageSize == reference.imageSize, let width = reference.shoulderWidth else { return nil }
+
+            let drops = [Joint.leftShoulder, .rightShoulder].compactMap { joint -> CGFloat? in
+                guard let original = reference.pixelPoint(joint), let current = pixelPoint(joint),
+                      abs(original.x - current.x) <= width * 0.5 else { return nil }
+                return (original.y - current.y) / width
+            }
+            guard !drops.isEmpty else { return nil }
+            return drops.reduce(0, +) / CGFloat(drops.count)
+        }
+
+        func hasMatchingWrists(to reference: Frame) -> Bool {
+            guard imageSize == reference.imageSize, let width = reference.shoulderWidth else { return false }
+
+            return [Joint.leftWrist, .rightWrist].allSatisfy { joint in
+                guard let original = reference.pixelPoint(joint), let current = pixelPoint(joint) else { return false }
+                return hypot(original.x - current.x, original.y - current.y) <= width * 0.45
+            }
+        }
+
+        private var shoulderWidth: CGFloat? {
+            guard let left = pixelPoint(.leftShoulder), let right = pixelPoint(.rightShoulder) else { return nil }
+            let width = abs(left.x - right.x)
+            return width >= imageSize.width * 0.045 && width > 0 ? width : nil
         }
 
         func smoothed(from previous: Frame?) -> Frame {

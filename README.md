@@ -31,7 +31,7 @@ Le projet Xcode est inclus. XcodeGen sert uniquement si tu veux le régénérer 
 
 ## Comptage et confidentialité
 
-AVFoundation fournit le flux de la caméra avant. [Apple Vision](https://developer.apple.com/documentation/vision/detecting-human-body-poses-in-images) repère les articulations et les affiche dans l’aperçu. De face, le compteur suit le mouvement des épaules par rapport aux poignets, du haut vers le bas puis de retour en haut. Il utilise aussi les jambes visibles pour vérifier le cadrage. Le mode **De profil** compte toujours à partir de l’angle du coude. Si les jambes sont masquées de face, surélève un peu le téléphone.
+AVFoundation fournit le flux de la caméra avant. [Apple Vision](https://developer.apple.com/documentation/vision/detecting-human-body-poses-in-images) repère les articulations et les affiche dans l’aperçu. De face, le compteur suit le mouvement des épaules par rapport aux poignets, du haut vers le bas puis de retour en haut. Les jambes visibles servent à vérifier la position de départ. Si des articulations sont brièvement masquées pendant une descente détectée, le compteur peut valider la pompe à la remontée. Le mode **De profil** compte toujours à partir de l’angle du coude. Si les jambes sont masquées de face, surélève un peu le téléphone.
 
 L’analyse se fait sur l’iPhone. Les images ne sont ni enregistrées ni envoyées. Seuls les totaux et les dates des séances sont conservés dans le stockage de l’app, avec les réglages. L’app fonctionne sans compte, serveur ni dépendance tierce.
 

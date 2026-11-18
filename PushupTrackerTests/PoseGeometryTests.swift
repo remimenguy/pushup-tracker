@@ -28,17 +28,17 @@ final class PoseGeometryTests: XCTestCase {
         ))
     }
 
-    func testCountsAFrontalRepEvenWhenBentElbowsProjectAsStraight() throws {
-        let top = try XCTUnwrap(frame(shoulderY: 185).frontMeasurement)
-        let bottom = try XCTUnwrap(frame(shoulderY: 128).frontMeasurement)
-        let shallow = try XCTUnwrap(frame(shoulderY: 163).frontMeasurement)
+    func testCountsAFrontalRepEvenWhenBentElbowsProjectAsStraight() {
+        let top = frame(shoulderY: 185)
+        let bottom = frame(shoulderY: 128)
+        let shallow = frame(shoulderY: 163)
 
         var counter = FrontPushUpCounter()
-        let positions = [bottom, top, shallow, top, bottom, top, top]
-        let increments = positions.enumerated().map { index, measurement in
+        let poses = [bottom, top, shallow, top, bottom, top, top]
+        let increments = poses.enumerated().map { index, pose in
             let time = Double(index) * 0.25
-            _ = counter.update(measurement, at: time)
-            return counter.update(measurement, at: time + 0.11)
+            _ = update(pose, at: time, into: &counter)
+            return update(pose, at: time + 0.11, into: &counter)
         }
         XCTAssertEqual(increments, [false, false, false, false, false, true, false])
     }
@@ -59,19 +59,67 @@ final class PoseGeometryTests: XCTestCase {
         XCTAssertNil(frame(shoulderY: 185, legY: 10).frontMeasurement)
     }
 
-    func testFrontalRepIsDiscardedWhenTheLegsLeaveTheFrame() throws {
-        let top = try XCTUnwrap(frame(shoulderY: 185).frontMeasurement)
-        let bottom = try XCTUnwrap(frame(shoulderY: 128).frontMeasurement)
-        let missingLegs = frame(shoulderY: 170, legY: nil).frontMeasurement
+    func testFrontalRepIsDiscardedAfterProlongedTrackingLoss() {
+        let top = frame(shoulderY: 185)
+        let bottom = frame(shoulderY: 128)
+        let hidden = PoseGeometry.Frame(imageSize: top.imageSize, points: [:])
         var counter = FrontPushUpCounter()
 
-        XCTAssertFalse(counter.update(top, at: 0))
-        XCTAssertFalse(counter.update(top, at: 0.12))
-        XCTAssertFalse(counter.update(bottom, at: 0.25))
-        XCTAssertFalse(counter.update(bottom, at: 0.37))
-        XCTAssertFalse(counter.update(missingLegs, at: 0.9))
-        XCTAssertFalse(counter.update(top, at: 1))
-        XCTAssertFalse(counter.update(top, at: 1.12))
+        XCTAssertFalse(update(top, at: 0, into: &counter))
+        XCTAssertFalse(update(top, at: 0.12, into: &counter))
+        XCTAssertFalse(update(bottom, at: 0.25, into: &counter))
+        XCTAssertFalse(update(bottom, at: 0.37, into: &counter))
+        XCTAssertFalse(update(hidden, at: 1, into: &counter))
+        XCTAssertFalse(update(hidden, at: 2, into: &counter))
+        XCTAssertFalse(update(top, at: 2.1, into: &counter))
+        XCTAssertFalse(update(top, at: 2.22, into: &counter))
+    }
+
+    func testCountsWhenTheBottomIsBrieflyOccludedAfterAVisibleDescent() {
+        let top = frame(shoulderY: 185)
+        let descent = frame(shoulderY: 158)
+        let hidden = PoseGeometry.Frame(imageSize: top.imageSize, points: [:])
+        var counter = FrontPushUpCounter()
+
+        XCTAssertFalse(update(top, at: 0, into: &counter))
+        XCTAssertFalse(update(top, at: 0.12, into: &counter))
+        XCTAssertFalse(update(descent, at: 0.30, into: &counter))
+        XCTAssertFalse(update(descent, at: 0.42, into: &counter))
+        XCTAssertFalse(update(hidden, at: 0.50, into: &counter))
+        XCTAssertFalse(update(hidden, at: 0.62, into: &counter))
+        XCTAssertFalse(update(hidden, at: 0.95, into: &counter))
+        XCTAssertFalse(update(top, at: 1.14, into: &counter))
+        XCTAssertTrue(update(top, at: 1.26, into: &counter))
+        XCTAssertFalse(update(top, at: 1.38, into: &counter))
+    }
+
+    func testCountsWhenOneShoulderIsVisibleAtTheBottom() {
+        let top = frame(shoulderY: 185)
+        let bottom = frame(shoulderY: 130)
+        let partial = PoseGeometry.Frame(imageSize: bottom.imageSize,
+                                         points: bottom.points.filter { $0.key == .leftShoulder })
+        XCTAssertNil(partial.frontMeasurement)
+        var counter = FrontPushUpCounter()
+
+        XCTAssertFalse(update(top, at: 0, into: &counter))
+        XCTAssertFalse(update(top, at: 0.12, into: &counter))
+        XCTAssertFalse(update(partial, at: 0.30, into: &counter))
+        XCTAssertFalse(update(partial, at: 0.42, into: &counter))
+        XCTAssertFalse(update(top, at: 0.66, into: &counter))
+        XCTAssertTrue(update(top, at: 0.78, into: &counter))
+    }
+
+    func testLossAtTheTopIsNotTreatedAsADescent() {
+        let top = frame(shoulderY: 185)
+        let hidden = PoseGeometry.Frame(imageSize: top.imageSize, points: [:])
+        var counter = FrontPushUpCounter()
+
+        XCTAssertFalse(update(top, at: 0, into: &counter))
+        XCTAssertFalse(update(top, at: 0.12, into: &counter))
+        XCTAssertFalse(update(hidden, at: 0.33, into: &counter))
+        XCTAssertFalse(update(hidden, at: 0.67, into: &counter))
+        XCTAssertFalse(update(top, at: 0.85, into: &counter))
+        XCTAssertFalse(update(top, at: 0.97, into: &counter))
     }
 
     func testOverlayFitsAndFlipsVerticalCoordinates() {
@@ -80,6 +128,27 @@ final class PoseGeometryTests: XCTestCase {
         XCTAssertEqual(rect, CGRect(x: 57.5, y: 0, width: 225, height: 300))
         XCTAssertEqual(PoseGeometry.previewPoint(CGPoint(x: 0.25, y: 0.75), in: rect),
                        CGPoint(x: 113.75, y: 75))
+    }
+
+    func testReturningWithHandsInANewPositionDoesNotFinishTheRep() {
+        let top = frame(shoulderY: 185)
+        let bottom = frame(shoulderY: 128)
+        let moved = PoseGeometry.Frame(imageSize: top.imageSize, points: top.points.mapValues {
+            CGPoint(x: $0.x + 0.13, y: $0.y)
+        })
+        var counter = FrontPushUpCounter()
+
+        XCTAssertFalse(update(top, at: 0, into: &counter))
+        XCTAssertFalse(update(top, at: 0.12, into: &counter))
+        XCTAssertFalse(update(bottom, at: 0.30, into: &counter))
+        XCTAssertFalse(update(bottom, at: 0.42, into: &counter))
+        XCTAssertFalse(update(moved, at: 0.66, into: &counter))
+        XCTAssertFalse(update(moved, at: 0.78, into: &counter))
+    }
+
+    @discardableResult
+    private func update(_ frame: PoseGeometry.Frame, at time: TimeInterval, into counter: inout FrontPushUpCounter) -> Bool {
+        counter.update(frame, measurement: frame.frontMeasurement, at: time)
     }
 
     private func frame(shoulderY: CGFloat, legY: CGFloat? = 145,

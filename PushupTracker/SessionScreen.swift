@@ -124,7 +124,7 @@ struct SessionScreen: View {
             .frame(height: 300)
             .clipShape(RoundedRectangle(cornerRadius: 22))
 
-            if case let .front(arms, legs, _) = status {
+            if case let .front(arms, legs, _, _) = status {
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: 12) {
                         limbStatus("Bras", count: arms, color: Palette.accent)
@@ -168,7 +168,7 @@ struct SessionScreen: View {
 
     private var trackingIsReady: Bool {
         switch status {
-        case .ready, .front(_, _, true): true
+        case .ready, .front(_, _, true, _): true
         default: false
         }
     }
@@ -177,9 +177,10 @@ struct SessionScreen: View {
         switch status {
         case .framing: mode == .front ? "Cadre-toi de face" : "Cadre-toi de profil"
         case .searching: "Place ton bras et ta hanche dans le cadre"
-        case .ready, .front(_, _, true): "Position détectée"
-        case .front(let arms, _, false) where arms < 2: "Garde tes deux bras dans le cadre"
-        case .front(_, 0, false): "Surélève l’iPhone pour voir tes jambes"
+        case .ready, .front(_, _, true, _): "Position détectée"
+        case .front(_, _, false, true): "Suivi partiel · remonte pour valider"
+        case .front(let arms, _, false, false) where arms < 2: "Garde tes deux bras dans le cadre"
+        case .front(_, 0, false, false): "Surélève l’iPhone pour voir tes jambes"
         case .front: "Mets-toi en position de pompe"
         case .denied, .unavailable: "Caméra indisponible · saisie manuelle possible"
         }

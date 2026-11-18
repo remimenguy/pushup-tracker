@@ -10,6 +10,11 @@ struct PushUpCounter {
     private(set) var phase = Phase.waitingForTop
     private var candidateSince: TimeInterval?
     private var lastTrackedAt: TimeInterval?
+    private let trackingTimeout: TimeInterval
+
+    init(trackingTimeout: TimeInterval = 0.45) {
+        self.trackingTimeout = trackingTimeout
+    }
 
     @discardableResult
     mutating func update(angle: Double?, at seconds: TimeInterval) -> Bool {
@@ -24,8 +29,8 @@ struct PushUpCounter {
 
     @discardableResult
     mutating func update(position: Position?, at seconds: TimeInterval) -> Bool {
-        if let lastTrackedAt, seconds - lastTrackedAt > 0.45 {
-            self = Self()
+        if let lastTrackedAt, seconds - lastTrackedAt > trackingTimeout {
+            self = Self(trackingTimeout: trackingTimeout)
         }
         guard let position else {
             candidateSince = nil
@@ -59,26 +64,62 @@ struct PushUpCounter {
 }
 
 struct FrontPushUpCounter {
-    private var cycle = PushUpCounter()
-    private var topHeight: CGFloat?
+    private struct Reference {
+        let frame: PoseGeometry.Frame
+        let height: CGFloat
+    }
 
-    mutating func update(_ measurement: PoseGeometry.FrontMeasurement?, at seconds: TimeInterval) -> Bool {
-        let phase = cycle.phase
-        let position = measurement.map { measurement -> PushUpCounter.Position in
-            let height = measurement.relativeHeight
-            if phase != .waitingForTop, let topHeight, height <= topHeight * 0.65 {
-                return .bottom
-            }
-            let minimumHeight = phase == .waitingForTop ? 0.62 : (topHeight ?? 0.62) * 0.85
-            return height >= minimumHeight && measurement.armsExtended ? .top : .middle
+    private var cycle = PushUpCounter(trackingTimeout: 1.5)
+    private var reference: Reference?
+    private var nearBottomAt: TimeInterval?
+
+    var isFollowingDescent: Bool {
+        cycle.phase == .waitingForReturn || nearBottomAt != nil
+    }
+
+    mutating func update(
+        _ frame: PoseGeometry.Frame, measurement: PoseGeometry.FrontMeasurement?, at seconds: TimeInterval
+    ) -> Bool {
+        if let reference, measurement != nil, !frame.hasMatchingWrists(to: reference.frame) {
+            self = Self()
         }
 
+        let previousPhase = cycle.phase
+        let position = position(of: frame, measurement: measurement, at: seconds)
         let counted = cycle.update(position: position, at: seconds)
-        if phase == .waitingForTop && cycle.phase == .waitingForBottom {
-            topHeight = measurement?.relativeHeight
-        } else if counted, let height = measurement?.relativeHeight, let topHeight {
-            self.topHeight = topHeight * 0.75 + height * 0.25
+
+        if cycle.phase == .waitingForTop {
+            reference = nil
+            nearBottomAt = nil
+        } else if (previousPhase == .waitingForTop || counted), let measurement {
+            reference = Reference(frame: frame, height: measurement.relativeHeight)
+            nearBottomAt = nil
         }
+
         return counted
+    }
+
+    private mutating func position(
+        of frame: PoseGeometry.Frame, measurement: PoseGeometry.FrontMeasurement?, at seconds: TimeInterval
+    ) -> PushUpCounter.Position? {
+        guard let reference else {
+            return measurement.map { $0.armsExtended && $0.relativeHeight >= 0.62 ? .top : .middle }
+        }
+
+        if let drop = frame.shoulderDrop(from: reference.frame) {
+            nearBottomAt = drop >= reference.height * 0.30 ? seconds : nil
+            if drop >= reference.height * 0.35 { return .bottom }
+            if let measurement, measurement.armsExtended, measurement.relativeHeight >= reference.height * 0.85,
+               drop <= reference.height * 0.20 {
+                return .top
+            }
+            return .middle
+        }
+
+        // A short occlusion can complete a descent only when the shoulders were already near the bottom.
+        if let nearBottomAt, seconds - nearBottomAt <= 0.22 {
+            return .bottom
+        }
+        return nil
     }
 }
